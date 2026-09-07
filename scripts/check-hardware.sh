@@ -159,7 +159,35 @@ else
 fi
 echo
 
-# 9) Ambient light sensor + keyboard backlight
+# 9) Intel Sensor Hub firmware (the ambient light sensor lives behind it)
+printf '%sIntel Sensor Hub (ISH)%s\n' "$c_bold" "$c_off"
+ish_pci=""
+for d in /sys/bus/pci/devices/*; do
+  [[ "$(cat "$d/vendor" 2>/dev/null)" == "0x8086" && "$(cat "$d/device" 2>/dev/null)" == "0xe445" ]] || continue
+  ish_pci="${d##*/}"; break
+done
+if [[ -n $ish_pci ]]; then
+  ish_vendor=$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null || echo '')
+  ish_family=$(cat /sys/class/dmi/id/product_family 2>/dev/null || echo '')
+  ish_name=""
+  if command -v python3 >/dev/null 2>&1 && [[ -n $ish_vendor && -n $ish_family ]]; then
+    ish_name="$(python3 -c 'import sys,zlib; print("ish_ptl_%08x_%08x.bin" % (zlib.crc32(sys.argv[1].encode()), zlib.crc32(sys.argv[2].encode())))' "$ish_vendor" "$ish_family" 2>/dev/null)"
+  fi
+  ish_clients=0
+  for d in /sys/bus/ishtp/devices/*; do [[ -e $d ]] && ish_clients=$(( ish_clients + 1 )); done
+  if (( ish_clients > 0 )); then
+    ok "ISH $ish_pci (8086:e445) firmware running — $ish_clients ishtp client devices"
+  elif [[ -n $ish_name && -f /lib/firmware/intel/ish/$ish_name ]]; then
+    warn "ISH $ish_pci: $ish_name is installed but no ishtp client devices yet — reboot (or reload intel_ish_ipc)"
+  else
+    warn "ISH $ish_pci: no ishtp client devices and no per-OEM image ${ish_name:-ish_ptl_<vendor>_<family>.bin} — ish-firmware applies (needed for the ambient light sensor)"
+  fi
+else
+  note "no Intel Sensor Hub 8086:e445 on PCI — ish-firmware does not apply"
+fi
+echo
+
+# 10) Ambient light sensor + keyboard backlight
 printf '%sAmbient light sensor / keyboard backlight%s\n' "$c_bold" "$c_off"
 als_dev=""
 for d in /sys/bus/iio/devices/iio:device*; do
@@ -174,7 +202,7 @@ if [[ -n $als_dev ]]; then
   als_lux="$(awk -v r="$als_raw" -v s="$als_scale" 'BEGIN{printf "%.1f", r*s}')"
   ok "iio 'als' at ${als_dev##*/} reading ${als_lux} lux — keyboard-backlight-auto applies"
 else
-  note "no iio 'als' device — keyboard-backlight-auto has nothing to read"
+  note "no iio 'als' device — keyboard-backlight-auto has nothing to read (see the ISH line above; ish-firmware provides it)"
 fi
 if [[ -w /sys/class/leds/asus::kbd_backlight/brightness || -e /sys/class/leds/asus::kbd_backlight/brightness ]]; then
   ok "asus::kbd_backlight LED present (max $(cat /sys/class/leds/asus::kbd_backlight/max_brightness 2>/dev/null || echo '?'))"
@@ -184,7 +212,7 @@ else
 fi
 echo
 
-# 10) Distro
+# 11) Distro
 printf '%sDistro%s\n' "$c_bold" "$c_off"
 if [[ -f /etc/arch-release ]]; then
   ok "Arch (or derivative) — patcher's pacman + paths assumed correct"

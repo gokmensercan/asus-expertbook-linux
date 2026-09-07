@@ -39,6 +39,7 @@ curl -fsSL https://raw.githubusercontent.com/burakgon/asus-expertbook-linux/main
 | Audio codec | Cirrus `CS42L43` + 2× `CS35L56` (subsystem `1043:15e4`) | Per-OEM speaker firmware needed |
 | Wi-Fi card | Intel Wi-Fi 7 `BE211` (`8086:e440`) | iwlmld-mode tunables apply here |
 | Ambient light sensor | `iio` device named `als` with `in_illuminance_raw` | `keyboard-backlight-auto` reads it to drive the keyboard backlight |
+| Intel Sensor Hub | PCI `8086:e445` with `/sys/bus/ishtp/devices` populated | The `als` device only exists once the ISH runs ASUS's signed image; `ish-firmware` installs it |
 | Distro | Arch / CachyOS / any Arch-derivative | The patcher uses `pacman` and reads `/etc` paths Arch-style |
 
 If you're on a sibling model (`104315d4` / `104315f4`) and willing to test, see
@@ -57,6 +58,7 @@ different distro, the modules themselves still apply — only the
 | **Intel Core Ultra X7/X9** Panther Lake hybrid (P + E + LP-E cores) | **Idle power 4–5 W**, fans audible at idle, P-cores never deep-sleep. | Idle ≈ 2–2.5 W. Workload parks on a single LP-E core. P-cores reach `C10`. | [`intel-perf-fix`](intel-perf-fix/) |
 | **USB UVC webcam** (+ idle Panther Lake NPU) | **No AI camera effects.** Windows Studio Effects (background blur, smart framing) doesn't exist on Linux out of the box. | **CPU** background blur via OBS + `obs-backgroundremoval`, exposed as a virtual camera ("AI Camera"). *(NPU offload is not available in the OBS plugin on Linux — see the module's reality-check note.)* | [`webcam-ai-fix`](webcam-ai-fix/) |
 | **Shinetech USB camera + UEFI ESRT target** | ASUS camera firmware 3009 is distributed as a Windows EXE. | Compares locally against the fixed, verified 3009 baseline; offers a confirmed `fwupd` capsule update without running Windows or querying ASUS for newer versions. | [`camera-firmware`](camera-firmware/) |
+| **Intel Sensor Hub** (`8086:e445`, carries the ambient light sensor) | **No ambient light sensor at all.** The kernel's generic `ish_ptl.bin` is rejected (`ISH loader: cmd 2 failed 10`); linux-firmware has no ASUS image, so `/sys/bus/iio` never gets an `als` device. | The ASUS-signed image from ASUS's own Sensor Hub driver package is verified and installed under the per-OEM name the kernel requests; `iio:device1 = als` appears and `keyboard-backlight-auto` has a sensor to read. | [`ish-firmware`](ish-firmware/) |
 | **Ambient light sensor** (`iio` `als`) + keyboard backlight | **The backlight never adapts to the room.** KDE PowerDevil reads the sensor for *screen* brightness only; the keyboard stays wherever the Fn keys left it, and comes up dark after every boot. | *(optional)* The backlight follows the room using Windows 11's documented ALR curve — dim in the dark, brightest around 40–100 lux, off above 200–300 lux. Forced off with the lid shut; Fn keys still take over. | [`keyboard-backlight-auto`](keyboard-backlight-auto/) |
 | **ASUS BIOS `SLKB` ACPI method** (BIOS `B9406CAA.312`) | **Keyboard brightness reads back as `0`** no matter what it was set to — sysfs, UPower and `brightnessctl` all report a dark keyboard, and `systemd-backlight` restores `0` at every boot. Writes themselves reach the EC fine. | *(superseded)* Nothing to fix on the write path: the v1.x `asusd` workaround targeted an ACPI branch mainline `asus-wmi` never reaches. Kept for older firmware, skips install by default. | [`keyboard-backlight-fix`](keyboard-backlight-fix/) |
 
@@ -82,7 +84,7 @@ After reboot:
 ./patch.sh status
 ```
 
-You should see all nine modules `up to date` (or not applicable) and their runtime
+You should see all ten modules `up to date` (or not applicable) and their runtime
 checks green — except `keyboard-backlight-fix`, which reports `not installed`
 because it deliberately supersedes itself.
 
@@ -570,6 +572,27 @@ AC connected applies it; current/equal/newer firmware is never reflashed.
 
 See [`camera-firmware/README.md`](camera-firmware/README.md) for the hashes,
 ESRT GUID and local-package paths.
+
+### 10. [`ish-firmware`](ish-firmware/) — the ambient light sensor's missing firmware
+
+The ambient light sensor sits behind the Intel Integrated Sensor Hub
+(`00:12.0`, `8086:e445`), which only runs after the kernel uploads an
+OEM-signed image at boot. Before the generic `ish_ptl.bin` the loader asks for
+`intel/ish/ish_ptl_<crc32(sys_vendor)>_<crc32(product_family)>.bin` — a rule
+that reproduces linux-firmware's Lenovo/Dell entries exactly — but linux-firmware
+ships no ASUS image, and this board rejects the generic one
+(`ISH loader: cmd 2 failed 10`). Result: no `als` device, ever.
+
+Same approach as `camera-firmware`: the module downloads (or uses a verified
+local copy of) ASUS's fixed **Intel Sensor Hub V5.8.62.0** package, checks the
+pinned SHA-256 of the EXE and of the embedded
+`AsusSign_ishS_SI_B9406CAA_5.8.1.7783.bin`, installs it as
+`ish_ptl_59b8d9f2_84881981.bin` and reloads `intel_ish_ipc`. Nothing is
+flashed and nothing ASUS-owned is redistributed. Install it before
+`keyboard-backlight-auto`.
+
+See [`ish-firmware/README.md`](ish-firmware/README.md) for the evidence,
+hashes and the naming rule.
 
 ## How it works
 

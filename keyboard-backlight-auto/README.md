@@ -144,7 +144,10 @@ A visible consequence: `systemd-backlight@leds:asus::kbd_backlight` saves `0`
 at every shutdown and restores a dark keyboard at every boot. The service is
 ordered `After=` it so the curve gets the last word.
 
-**The sensor.** `iio:device1` (`name` = `als`), read through
+**The sensor.** `iio:device1` (`name` = `als`), a HID sensor behind the Intel
+Sensor Hub. It only exists once the ISH runs ASUS's signed firmware image — on a
+stock install the kernel's generic `ish_ptl.bin` is rejected and no `als` device
+ever appears. Install [`ish-firmware`](../ish-firmware/) first. The device is read through
 `in_illuminance_raw` with the driver's `in_illuminance_scale` applied. Read
 directly from sysfs rather than through iio-sensor-proxy's D-Bus API: the raw
 attribute stays readable even while the proxy holds the IIO buffer claimed,
