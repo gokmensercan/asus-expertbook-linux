@@ -59,6 +59,7 @@ different distro, the modules themselves still apply — only the
 | **Shinetech USB camera + UEFI ESRT target** | ASUS camera firmware 3009 is distributed as a Windows EXE. | Compares locally against the fixed, verified 3009 baseline; offers a confirmed `fwupd` capsule update without running Windows or querying ASUS for newer versions. | [`camera-firmware`](camera-firmware/) |
 | **Ambient light sensor** (`iio` `als`) + keyboard backlight | **The backlight never adapts to the room.** KDE PowerDevil reads the sensor for *screen* brightness only; the keyboard stays wherever the Fn keys left it, and comes up dark after every boot. | *(optional)* The backlight follows the room using Windows 11's documented ALR curve — dim in the dark, brightest around 40–100 lux, off above 200–300 lux. Forced off with the lid shut; Fn keys still take over. | [`keyboard-backlight-auto`](keyboard-backlight-auto/) |
 | **ASUS BIOS `SLKB` ACPI method** (BIOS `B9406CAA.312`) | **Keyboard brightness reads back as `0`** no matter what it was set to — sysfs, UPower and `brightnessctl` all report a dark keyboard, and `systemd-backlight` restores `0` at every boot. Writes themselves reach the EC fine. | *(superseded)* Nothing to fix on the write path: the v1.x `asusd` workaround targeted an ACPI branch mainline `asus-wmi` never reaches. Kept for older firmware, skips install by default. | [`keyboard-backlight-fix`](keyboard-backlight-fix/) |
+| **Keyboard backlight query** `DSTS(0x00050021)` (BIOS `B9406CAA.312`) | **The level can never be read back**: the query returns `0x550000` (level bits 0) whatever the EC drives, and mainline `asus-wmi` stores that 0 in its cache on every sysfs read — so UPower/KDE show 0, `systemd-backlight` restores a dark keyboard, and the Fn toggle key computes its next level from 0. | A DMI-scoped `asus-wmi` quirk returns the driver's cached level instead of asking firmware that cannot answer; `brightness`, UPower and the KDE slider track writes and Fn presses. DKMS overlay until upstream. | [`keyboard-backlight-readback`](keyboard-backlight-readback/) |
 
 > **Nothing this repo installs is a band-aid in the bad sense.** Every module
 > uses the exact same upstream-recognised mechanism (udev hwdb, libinput
@@ -570,6 +571,35 @@ AC connected applies it; current/equal/newer firmware is never reflashed.
 
 See [`camera-firmware/README.md`](camera-firmware/README.md) for the hashes,
 ESRT GUID and local-package paths.
+
+### 10. [`keyboard-backlight-readback`](keyboard-backlight-readback/) — make the keyboard backlight level readable
+
+[`keyboard-backlight-fix`](keyboard-backlight-fix/) v2 showed that the write
+path works and the *query* path does not: `DSTS(0x00050021)` returns
+`0x550000` — presence bit set, level bits always 0. The DSDT handler returns
+constants and never encodes the level, so nothing on the OS side can make the
+firmware answer. What *can* be fixed is what mainline `asus-wmi` does with
+that answer: `kbd_led_get()` stores the 0 in its own cache on every sysfs
+read, which is why UPower, `brightnessctl` and the KDE slider always show 0,
+why `systemd-backlight` restores a dark keyboard, and why the Fn backlight
+key (a toggle here, `ASUS_EV_BRTTOGGLE`) yields level 1 after any read instead
+of continuing the 2 → 3 → 0 → 1 cycle from the real level.
+
+This module ships a DMI-scoped driver quirk (`kbd_led_no_readback`) as a DKMS
+overlay of `asus-wmi` + `asus-nb-wmi`, the same way `audio-fix` ships its
+SoundWire overlay: on this board `kbd_led_get()` returns the cached level,
+which every write, Fn press and `do_kbd_led_set()` keeps current. The patch
+for upstream is
+[`upstream-patches/0005-…`](upstream-patches/0005-platform-x86-asus-wmi-Add-keyboard-backlight-read-b.patch);
+the module detects the `B9406CAA` marker in a stock module and stops building
+the overlay once a kernel carries it. Bundled source trees: Linux v7.2.3
+(vanilla) and CachyOS 6.18.48; other series are skipped, not mis-built.
+
+`keyboard-backlight-auto` is unaffected (it never reads `brightness`); with
+both installed, the level it sets is the level the OS reports.
+
+See [`keyboard-backlight-readback/README.md`](keyboard-backlight-readback/README.md)
+for the measurements.
 
 ## How it works
 

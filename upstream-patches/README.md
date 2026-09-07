@@ -31,6 +31,23 @@ it.
 
 ## Pending or experimental
 
+### `0005-platform-x86-asus-wmi-Add-keyboard-backlight-read-b.patch`
+
+- **Tree:** `torvalds/linux` → `drivers/platform/x86/asus-wmi.{c,h}`,
+  `drivers/platform/x86/asus-nb-wmi.c`
+- **Where to send:** `platform-driver-x86@vger.kernel.org` (see
+  `MAINTAINERS`, "ASUS WMI HARDWARE MONITOR DRIVER" / "ASUS NOTEBOOKS AND
+  EEEPC ACPI/WMI EXTRAS DRIVERS")
+- **Applies to:** master `df2908090cda` (2026-09-06) and v7.2.3.
+- **What it does:** adds a `kbd_led_no_readback` quirk flag and a DMI entry
+  for the B9406CAA so `kbd_led_get()` returns the driver's cached keyboard
+  backlight level instead of overwriting it with the constant 0 the firmware
+  query returns on this board.
+- **Local replacement:** `keyboard-backlight-readback`'s DKMS overlay, which
+  detects the quirk marker per kernel and stops building once a kernel ships
+  the patch.
+
+
 ### `0003-libinput-quirks-Add-PixArt-093A-4F05-touchpad.patch`
 
 - **Tree:** `freedesktop.org/libinput/libinput` →

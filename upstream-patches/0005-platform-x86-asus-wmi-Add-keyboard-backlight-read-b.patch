@@ -1,0 +1,114 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sercan GOKMEN <gokmensercan@gmail.com>
+Date: Mon, 7 Sep 2026 15:40:00 +0300
+Subject: [PATCH] platform/x86: asus-wmi: Add keyboard backlight read-back
+ quirk for ASUS ExpertBook Ultra B9406CAA
+
+On the ASUS ExpertBook Ultra B9406CAA (BIOS 312) the keyboard backlight
+query DSTS(ASUS_WMI_DEVID_KBD_BACKLIGHT) always returns 0x550000: the
+presence bit is set but the level bits are 0 regardless of the level the
+EC is actually driving. The DSDT's DSTS handler for 0x00050021 builds
+its reply from constants (0x400000 | 0x350000, masked by the KBLT flag)
+and never reads the level from the EC, so no query variant can return
+it. Writes work: DEVS hands the value to the EC method SLKB and the
+0x80|level form the driver uses steps the keyboard through all levels.
+
+kbd_led_get() re-reads the firmware on every sysfs read and stores the
+result in asus->kbd_led_wk, so on this machine every read overwrites the
+cached level with 0. The visible effects are:
+
+ - /sys/class/leds/asus::kbd_backlight/brightness, UPower's
+   GetBrightness and brightnessctl always report 0;
+ - systemd-backlight saves 0 at shutdown and restores a dark keyboard
+   at every boot;
+ - the Fn backlight key on this laptop raises ASUS_EV_BRTTOGGLE, and
+   asus_wmi_kbd_led_hw_event() computes the next level from the cached
+   value, so after any read has zeroed the cache the next press always
+   yields level 1 whatever the keyboard was actually showing.
+
+Add a quirk_entry flag, kbd_led_no_readback, which makes kbd_led_get()
+return the cached level the way the existing !kbd_led_avail path
+already does. Every path that changes the level (do_kbd_led_set(),
+kbd_led_set_by_kbd(), the hotkey handler) keeps kbd_led_wk current, so
+the cache is the only trustworthy source on this board. Match the
+board with the same DMI strings the accepted SoundWire quirk for this
+machine uses (sys_vendor "ASUS", board_name "B9406CAA").
+
+Tested on the B9406CAA with Linux 7.2.3: after the quirk, brightness
+reads back 3/1/2 after the corresponding writes, UPower reports the same
+value, and three presses of the Fn backlight key from level 2 give
+2 -> 3 -> 0 -> 1 (the ASUS_EV_BRTTOGGLE wrap), each step read back
+correctly. The 6.18.48 build was compile-tested only.
+
+Signed-off-by: Sercan GOKMEN <gokmensercan@gmail.com>
+---
+ drivers/platform/x86/asus-wmi.h    |  5 +++++
+ drivers/platform/x86/asus-wmi.c    |  3 ++-
+ drivers/platform/x86/asus-nb-wmi.c | 21 +++++++++++++++++++++
+ 3 files changed, 28 insertions(+), 1 deletions(-)
+
+--- a/drivers/platform/x86/asus-wmi.h
++++ b/drivers/platform/x86/asus-wmi.h
+@@ -52,6 +52,11 @@
+ 	 */
+ 	int no_display_toggle;
+ 	u32 xusb2pr;
++	/*
++	 * The firmware never reports the keyboard backlight level (the query
++	 * always returns level 0), so trust the driver's cached value instead.
++	 */
++	bool kbd_led_no_readback;
+ };
+ 
+ struct asus_wmi_driver {
+--- a/drivers/platform/x86/asus-wmi.c
++++ b/drivers/platform/x86/asus-wmi.c
+@@ -1955,7 +1955,8 @@
+ 	asus = container_of(led_cdev, struct asus_wmi, kbd_led);
+ 
+ 	scoped_guard(spinlock_irqsave, &asus_ref.lock) {
+-		if (!asus->kbd_led_avail)
++		if (!asus->kbd_led_avail ||
++		    asus->driver->quirks->kbd_led_no_readback)
+ 			return asus->kbd_led_wk;
+ 	}
+ 
+--- a/drivers/platform/x86/asus-nb-wmi.c
++++ b/drivers/platform/x86/asus-nb-wmi.c
+@@ -93,6 +93,18 @@
+ 	.wmi_backlight_set_devstate = true,
+ };
+ 
++/*
++ * ASUS ExpertBook Ultra B9406CAA (BIOS 312): the keyboard backlight query,
++ * DSTS(0x00050021), always returns 0x550000, i.e. level 0, whatever the EC is
++ * actually driving. Writes work. Without this quirk every sysfs read
++ * overwrites the cached level with 0, so UPower, brightnessctl and
++ * systemd-backlight all see a dark keyboard and restore level 0 at boot.
++ */
++static struct quirk_entry quirk_asus_b9406caa = {
++	.wmi_backlight_set_devstate = true,
++	.kbd_led_no_readback = true,
++};
++
+ static struct quirk_entry quirk_asus_q500a = {
+ 	.filter_i8042_e1_extended_codes = true,
+ 	.wmi_backlight_set_devstate = true,
+@@ -165,6 +177,15 @@
+ static const struct dmi_system_id asus_quirks[] = {
+ 	{
+ 		.callback = dmi_matched,
++		.ident = "ASUS ExpertBook Ultra B9406CAA",
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "ASUS"),
++			DMI_MATCH(DMI_BOARD_NAME, "B9406CAA"),
++		},
++		.driver_data = &quirk_asus_b9406caa,
++	},
++	{
++		.callback = dmi_matched,
+ 		.ident = "ASUSTeK COMPUTER INC. Q500A",
+ 		.matches = {
+ 			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
+-- 
+2.51.0

@@ -178,7 +178,12 @@ else
 fi
 if [[ -w /sys/class/leds/asus::kbd_backlight/brightness || -e /sys/class/leds/asus::kbd_backlight/brightness ]]; then
   ok "asus::kbd_backlight LED present (max $(cat /sys/class/leds/asus::kbd_backlight/max_brightness 2>/dev/null || echo '?'))"
-  note "read-back always reports 0 on this firmware — expected, not a fault; see keyboard-backlight-fix"
+  kbr_mod="$(modinfo -n asus_nb_wmi 2>/dev/null || true)"
+  if [[ -n $kbr_mod ]] && { zstdcat "$kbr_mod" 2>/dev/null || xzcat "$kbr_mod" 2>/dev/null || cat "$kbr_mod"; } | strings | grep -qF 'B9406CAA'; then
+    ok "asus-wmi carries the B9406CAA read-back quirk — brightness reads back the real level (keyboard-backlight-readback / upstream)"
+  else
+    note "read-back always reports 0 on this firmware with stock asus-wmi — keyboard-backlight-readback fixes the query path; see keyboard-backlight-fix for the analysis"
+  fi
 else
   note "asus::kbd_backlight LED not present"
 fi
